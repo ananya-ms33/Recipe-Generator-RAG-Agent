@@ -41,10 +41,7 @@ class RecipeRAGAgent:
         if not self.api_key:
             raise ValueError("Google API Key not found. Please provide an API key.")
         
-        # Local embeddings to prevent any 429 quota exhaustion
         self.embeddings = LocalONNXEmbeddings()
-        
-        # Gemini 2.5 Flash for fast, expert culinary intelligence
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=self.api_key,
@@ -85,7 +82,6 @@ class RecipeRAGAgent:
         )
         splits = text_splitter.split_documents(all_docs)
 
-        # In-memory Chroma vector store
         self.vector_store = Chroma.from_documents(
             documents=splits,
             embedding=self.embeddings
@@ -123,7 +119,7 @@ class RecipeRAGAgent:
     ) -> Dict[str, Any]:
         """
         Executes semantic search over unstructured document chunks and generates
-        comprehensive, personalized cooking guidance fulfilling all Problem Statement 8 goals.
+        structured cooking guidance with strict pantry ingredient matching and clear layout.
         """
         if not self.vector_store:
             raise ValueError("No document indexed. Please upload or select a document.")
@@ -141,11 +137,11 @@ class RecipeRAGAgent:
             
         context = "\n\n".join(context_parts)
 
-        # 2. Structured Agent Prompt
+        # 2. Strict Pantry & Agentic Prompt
         system_prompt = """You are an expert AI Culinary Chef and Document Q&A Recipe Generator Agent (Problem Statement 8).
 Your mission is to answer user recipe queries by retrieving relevant text from the provided document context and adapting the recipes according to user constraints.
 
-DOCUMENT CONTEXT (Extracted from unstructured cookbook / recipe file):
+DOCUMENT CONTEXT:
 {context}
 
 USER CONSTRAINTS:
@@ -158,30 +154,64 @@ USER CONSTRAINTS:
 USER REQUEST:
 {question}
 
-Deliver your response in clean, beautiful GitHub Markdown with the following 5 structured sections:
+CRITICAL RULES FOR PANTRY INGREDIENTS & SUBSTITUTIONS:
+1. If the user specified Available Pantry Ingredients ({available_ingredients}):
+   - Actively use the ingredients in their pantry!
+   - If the recipe requires an ingredient (like eggs, butter, milk, sugar) and the user has a substitute in their pantry (e.g., apples/applesauce for eggs/sugar, oats, olive oil, bananas), explicitly substitute it and explain the culinary chemistry.
+   - If they lack an essential ingredient, state clearly what is missing and put it in the "Need to Buy" shopping list.
+2. In the Shopping List, ALWAYS separate into:
+   - **✅ In Your Pantry (Already have):** [List pantry ingredients that are used in this recipe]
+   - **🛒 Need to Buy (Missing items):** [List only missing items]
 
-### 1. 🍳 Recipe Title & Document Match
-- **Recipe Name:** (Name of the recipe from or inspired by the document)
-- **Document Source:** (Exact document file name and Page Number from the context)
-- **Timing & Yield:** Prep Time: [X mins] | Cook Time: [Y mins] | Total Time: [Z mins] | Scaled for **{servings} servings**
+Deliver your response using the following clean, beautifully formatted sections:
 
-### 2. 🥗 Ingredients & Smart Substitutions
-- List all ingredients scaled precisely for **{servings} servings**.
-- If dietary restrictions ({dietary_restriction}) or pantry constraints are specified, explicitly highlight which ingredients were substituted and explain **why the substitution works functionally** (e.g. sweetness, texture, binding, moisture).
+## 🍳 Recipe: [Recipe Title]
+- **Document Source:** [Exact Document & Page Number]
+- **Prep Time:** [X mins] | **Cook Time:** [Y mins] | **Total Time:** [Z mins]
+- **Portion Size:** Scaled for **{servings} servings**
 
-### 3. ⏱️ Step-by-Step Cooking Instructions
-- Provide numbered, chronological, easy-to-follow cooking steps based on the document.
-- Include **💡 Pro Chef Tips** for heat control, texture, or flavor enhancement.
+---
 
-### 4. 📊 Estimated Nutritional Facts (Per Serving)
-- **Calories:** ~[X] kcal
-- **Protein:** ~[X] g | **Carbs:** ~[X] g | **Fats:** ~[X] g | **Dietary Fiber:** ~[X] g
-- **Dietary Highlights:** (e.g. Sugar-Free, High-Protein, Low-Sodium, Heart-Healthy)
+### 🥗 Ingredients & Smart Substitutions
+(Scaled for **{servings} servings**)
+- [List every ingredient with exact measurement]
 
-### 5. 🛒 Smart Shopping List
-- A clean bulleted checklist of items needed to prepare this dish (accounting for available pantry items).
+**💡 Smart Substitutions & Pantry Adaptation:**
+- **Adaptation:** [Explicitly explain any dietary or pantry substitutions made, e.g. how apples/bananas replace eggs or sugar for moisture/binding, almond milk for dairy, etc.]
+- **Why it works:** [Culinary explanation of the chemistry and flavor profile]
 
-If the user query is an open-ended question (e.g. "What dishes are in this file?"), provide a rich, structured catalog of the recipes found in the document.
+---
+
+### ⏱️ Step-by-Step Cooking Instructions
+1. **[Step Name]:** [Detailed instruction]
+2. **[Step Name]:** [Detailed instruction]
+3. **[Step Name]:** [Detailed instruction]
+
+> 💡 **Chef Pro Tip:** [Practical tip on heat control, texture, or flavor enhancement]
+
+---
+
+### 📊 Estimated Nutritional Facts (Per Serving)
+| Nutrient | Amount Per Serving |
+| :--- | :--- |
+| **Calories** | ~[X] kcal |
+| **Protein** | ~[X] g |
+| **Total Carbohydrates** | ~[X] g |
+| **Total Fats** | ~[X] g |
+| **Dietary Fiber** | ~[X] g |
+
+**Dietary Highlights:** [e.g. Sugar-Free, High-Fiber, Vegan, Heart-Healthy]
+
+---
+
+### 🛒 Smart Shopping List
+**✅ In Your Pantry (Already Have):**
+- [Item 1 from user pantry]
+- [Item 2 from user pantry]
+
+**🛒 Need to Buy (Missing Ingredients):**
+- [ ] [Missing Item 1]
+- [ ] [Missing Item 2]
 """
 
         prompt = ChatPromptTemplate.from_template(system_prompt)
@@ -190,7 +220,7 @@ If the user query is an open-ended question (e.g. "What dishes are in this file?
         response = chain.invoke({
             "context": context if context else "No document excerpts found.",
             "dietary_restriction": dietary_restriction if dietary_restriction != "None" else "Standard / No restrictions",
-            "available_ingredients": available_ingredients if available_ingredients else "Standard pantry ingredients",
+            "available_ingredients": available_ingredients if available_ingredients else "None specified (Standard pantry)",
             "servings": str(servings),
             "max_time_mins": f"{max_time_mins} minutes" if max_time_mins else "No strict limit",
             "cuisine_preference": cuisine_preference if cuisine_preference != "Any" else "Standard",

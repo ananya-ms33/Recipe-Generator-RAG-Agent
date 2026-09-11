@@ -1,7 +1,11 @@
 ﻿"""
 =============================================================================
 🍳 Document Q&A RAG Agent for Recipe Generator
-Problem Statement No. 8 — Full Production Streamlit Application
+Problem Statement No. 8 — Production Streamlit Application
+- Zero Quota Errors (Local ONNX Embeddings)
+- Google Gemini 2.5 Flash for Culinary Reasoning
+- Dynamic Pantry Ingredient Substitution & Scaling
+- Clean UI with Markdown Tables, Pro Tips & Export Options
 =============================================================================
 """
 
@@ -11,7 +15,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
-# Section 1: Page Configuration & Custom UI Theme
+# Section 1: Page Configuration & Custom Theme
 # ---------------------------------------------------------------------------
 load_dotenv()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,39 +27,37 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Polished UI Styling
 st.markdown("""
 <style>
     .main-header {
-        font-family: 'Arial', sans-serif;
-        color: #E63946;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        color: #D90429;
         font-size: 28px;
-        font-weight: bold;
+        font-weight: 800;
         margin-bottom: 2px;
     }
     .sub-header {
-        color: #457B9D;
-        font-size: 15px;
+        color: #2B2D42;
+        font-size: 14px;
         margin-bottom: 12px;
     }
-    .badge-card {
-        background-color: #F8F9FA;
-        border: 1px solid #E9ECEF;
+    .status-bar {
+        background: linear-gradient(135deg, #F8F9FA, #EDF2F4);
         border-radius: 8px;
-        padding: 10px 14px;
-        margin-bottom: 12px;
+        padding: 10px 15px;
+        border-left: 5px solid #D90429;
+        margin-bottom: 15px;
+        font-size: 14px;
     }
-    .recipe-section {
-        background-color: #FFFFFF;
-        border-radius: 8px;
-        padding: 15px;
-        margin-top: 10px;
+    .stChatMessage {
+        border-radius: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# Section 2: API Key Configuration
+# Section 2: API Key Management
 # ---------------------------------------------------------------------------
 api_key = os.getenv("GOOGLE_API_KEY", "")
 if not api_key:
@@ -65,24 +67,24 @@ if not api_key:
         pass
 
 # ---------------------------------------------------------------------------
-# Section 3: Sidebar - Knowledge Base & Agent Personalization
+# Section 3: Sidebar Configuration
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("### ⚙️ System Setup")
     
     # API Key Input
     if not api_key:
-        input_key = st.text_input("🔑 Google Gemini API Key", type="password", help="Enter your Gemini API key")
+        input_key = st.text_input("🔑 Google Gemini API Key", type="password", help="Enter your Google API Key")
         if input_key:
             api_key = input_key
         else:
-            st.warning("⚠️ Google API Key is required. Please paste your key above.")
+            st.warning("⚠️ Google API Key required to run the agent.")
 
     st.divider()
     st.markdown("### 📚 1. Recipe Document Knowledge Base")
-    st.caption("Upload or select **any PDF / TXT document** (cookbooks, notes, recipes).")
+    st.caption("Upload or choose **any PDF or TXT** file (cookbooks, notes, recipes).")
 
-    # Discover local cookbooks
+    # Locate available documents
     local_pdfs = glob.glob(os.path.join(BASE_DIR, "*.pdf"))
     local_txts = glob.glob(os.path.join(BASE_DIR, "*.txt"))
     all_files = [os.path.basename(f) for f in (local_pdfs + local_txts)]
@@ -94,14 +96,14 @@ with st.sidebar:
         default_idx = all_files.index("cookbook.txt")
 
     selected_doc_name = st.selectbox(
-        "Select Active Cookbook:",
+        "Active Cookbook / File:",
         all_files if all_files else ["None"],
         index=default_idx if all_files else 0
     )
     
     selected_doc_path = os.path.join(BASE_DIR, selected_doc_name) if all_files else None
 
-    # Drag & Drop Uploader
+    # Upload custom document
     uploaded_file = st.file_uploader("Upload New Document (PDF / TXT)", type=["pdf", "txt"])
     if uploaded_file is not None:
         save_path = os.path.join(BASE_DIR, uploaded_file.name)
@@ -112,28 +114,28 @@ with st.sidebar:
         st.cache_resource.clear()
 
     st.divider()
-    st.markdown("### 🎯 2. Agentic Personalization Layer")
+    st.markdown("### 🎯 2. Agentic Personalization")
     diet = st.selectbox(
         "🥗 Dietary Restriction:",
         ["None", "Sugar-Free", "Vegan", "Vegetarian", "Gluten-Free", "Keto / Low-Carb", "Dairy-Free", "High-Protein", "Low-Sodium", "Nut-Free"]
     )
     servings = st.slider("👥 Target Servings:", min_value=1, max_value=12, value=4)
-    pantry = st.text_input("🥕 Available Pantry Ingredients (Optional):", placeholder="e.g., chicken, black beans, salsa")
-    cuisine = st.selectbox("🌶️ Cuisine / Flavor Preference:", ["Any", "Mexican", "Italian", "American Comfort", "Asian", "Mediterranean", "Kid-Friendly"])
+    pantry = st.text_input("🥕 Available Pantry Items (Optional):", placeholder="e.g. apples, oats, milk, flour")
+    cuisine = st.selectbox("🌶️ Cuisine / Flavor Preference:", ["Any", "Mexican", "Italian", "American", "Asian", "Mediterranean", "Kid-Friendly"])
     max_time = st.number_input("⏱️ Max Cooking Time (Mins, Optional):", min_value=0, max_value=240, value=0, step=5)
 
-    if st.button("🗑️ Clear Conversation"):
+    if st.button("🗑️ Clear Chat History"):
         st.session_state.messages = []
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# Section 4: Cached Local RAG Pipeline Builder
+# Section 4: Cached Local RAG Engine
 # ---------------------------------------------------------------------------
 from rag_engine import RecipeRAGAgent
 
 @st.cache_resource(show_spinner=False)
 def get_cached_rag_agent(doc_path: str, key: str):
-    """Initializes Chroma with 100% local ONNX embeddings (Zero API quota usage)."""
+    """Initializes and caches Chroma vector store with Local ONNX Embeddings."""
     if not key or not doc_path or not os.path.exists(doc_path):
         return None, "No document loaded."
     
@@ -146,36 +148,37 @@ def get_cached_rag_agent(doc_path: str, key: str):
 # Section 5: Main Application View
 # ---------------------------------------------------------------------------
 st.markdown('<div class="main-header">🍳 Document Q&A RAG Agent for Recipe Generator</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Problem Statement 8: Intelligent recipe document retrieval, personalized dietary adaptation, and smart cooking guidance.</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Problem Statement 8: Intelligent document retrieval, pantry-aware dietary adaptation, and step-by-step cooking guidance.</div>', unsafe_allow_html=True)
 
-# Status & Document Badge
+# Status Bar
 rag_agent = None
 if selected_doc_path and os.path.exists(selected_doc_path) and api_key:
-    with st.spinner(f"📖 Indexing `{os.path.basename(selected_doc_path)}` into local vector store..."):
+    with st.spinner(f"📖 Indexing `{os.path.basename(selected_doc_path)}`..."):
         rag_agent, doc_summary = get_cached_rag_agent(selected_doc_path, api_key)
     
-    col_x, col_y, col_z = st.columns([2, 1, 1])
-    with col_x:
-        st.markdown(f"📄 **Active Document:** `{os.path.basename(selected_doc_path)}` ({rag_agent.total_chunks} indexed segments)")
-    with col_y:
-        st.markdown(f"🥗 **Diet Filter:** `{diet}`")
-    with col_z:
-        st.markdown(f"👥 **Servings:** `{servings}`")
+    st.markdown(f"""
+    <div class="status-bar">
+        📄 <b>Active Document:</b> <code>{os.path.basename(selected_doc_path)}</code> ({rag_agent.total_chunks} segments) | 
+        🥗 <b>Diet Filter:</b> <b>{diet}</b> | 
+        👥 <b>Servings:</b> <b>{servings}</b> |
+        🥕 <b>Pantry Items:</b> <i>{pantry if pantry else 'Standard'}</i>
+    </div>
+    """, unsafe_allow_html=True)
 
     with st.expander("ℹ️ About this Document (AI Analysis)", expanded=False):
         st.info(doc_summary)
 else:
     if not api_key:
-        st.error("🔑 Please enter a valid Google Gemini API Key in the left sidebar.")
+        st.error("🔑 Please provide a Google Gemini API Key in the left sidebar.")
     else:
-        st.warning("⚠️ No cookbook document selected. Please choose or upload a file in the sidebar.")
+        st.warning("⚠️ No recipe document selected.")
 
-# Initialize Chat History
+# Initial Messages
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant",
-            "content": "👋 **Hello! I am your AI Recipe & Document Q&A Assistant.**\n\nI can retrieve recipes from your uploaded cookbook, adapt ingredients for your dietary preferences (Sugar-Free, Vegan, Gluten-Free, Keto), scale servings, calculate nutrition, and generate a shopping list.\n\n*Click one of the example queries below or ask any cooking question!*"
+            "content": "👋 **Hello! I am your AI Recipe & Document Q&A Assistant.**\n\nI can retrieve recipes from your uploaded document, intelligently substitute missing ingredients with items in your pantry, adapt to dietary constraints, calculate nutrition, and generate a shopping list.\n\n*Ask any cooking question or click one of the example queries below!*"
         }
     ]
 
@@ -187,7 +190,7 @@ for msg in st.session_state.messages:
             with st.expander("🔍 View Retrieved Document Sources"):
                 for idx, src in enumerate(msg["sources"]):
                     page_str = f"Page {src['page'] + 1}" if src.get('page') is not None else "Document Segment"
-                    st.markdown(f"**Excerpt {idx+1} ({src.get('file', 'Cookbook')} - {page_str}):**")
+                    st.markdown(f"**Source {idx+1} ({src.get('file', 'Cookbook')} - {page_str}):**")
                     st.caption(src.get("content", ""))
 
 # Quick Prompt Suggestions
@@ -196,14 +199,14 @@ st.markdown("##### 💡 Example Questions:")
 c1, c2, c3, c4 = st.columns(4)
 quick_query = None
 
-if c1.button("📋 What recipes are in this document?"):
+if c1.button("📋 Summarize all recipes in book"):
     quick_query = "What recipes and dishes are in this cookbook? Summarize them."
-if c2.button("🍲 Find a high-protein soup"):
-    quick_query = "Find a healthy soup or main dish in this book and scale it for 4 servings."
-if c3.button("🍪 Sugar-Free Dessert / Snack"):
+if c2.button("🍎 Adapt with Pantry Items"):
+    quick_query = "How can I adapt a recipe from this book using the ingredients in my pantry?"
+if c3.button("🍪 Sugar-Free Dessert"):
     quick_query = "Find a dessert or snack recipe in this book and adapt it to be sugar-free."
-if c4.button("🛒 Generate shopping list"):
-    quick_query = "Pick a popular recipe from this book and generate a complete shopping checklist with estimated nutrition."
+if c4.button("🍲 Healthy Soup / Main Dish"):
+    quick_query = "Give me a healthy soup or skillet recipe from this book scaled for 4 servings with nutrition facts."
 
 # Chat Input
 user_query = st.chat_input("Ask a recipe question, requested substitutions, or cooking steps...") or quick_query
@@ -214,14 +217,14 @@ if user_query:
     elif not rag_agent:
         st.error("Please select or upload a document first.")
     else:
-        # Append User Message
+        # User Message
         st.session_state.messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
-        # Generate Agent Response
+        # Assistant Message
         with st.chat_message("assistant"):
-            with st.spinner("🤖 Consulting recipe knowledge base and synthesizing cooking guidance..."):
+            with st.spinner("🤖 Consulting recipe document & personalizing cooking guidance..."):
                 try:
                     time_limit = max_time if max_time > 0 else None
                     res = rag_agent.query(
@@ -238,11 +241,19 @@ if user_query:
                     
                     st.markdown(answer)
                     
+                    # Download Recipe Button
+                    st.download_button(
+                        label="📥 Download Recipe (Text)",
+                        data=answer,
+                        file_name="personalized_recipe.txt",
+                        mime="text/plain"
+                    )
+
                     if sources:
                         with st.expander("🔍 View Retrieved Document Sources"):
                             for idx, src in enumerate(sources):
                                 page_str = f"Page {src['page'] + 1}" if src.get('page') is not None else "Document Segment"
-                                st.markdown(f"**Excerpt {idx+1} ({src.get('file', 'Cookbook')} - {page_str}):**")
+                                st.markdown(f"**Source {idx+1} ({src.get('file', 'Cookbook')} - {page_str}):**")
                                 st.caption(src.get("content", ""))
 
                     st.session_state.messages.append({
