@@ -1,5 +1,6 @@
 ﻿import os
-import tempfile
+import json
+import re
 from typing import List, Dict, Optional, Any
 from dotenv import load_dotenv
 
@@ -13,10 +14,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.embeddings import Embeddings
 import chromadb.utils.embedding_functions as ef
-from pypdf import PdfReader
 
 # ---------------------------------------------------------------------------
-# Section A: Quota-Free Local Embedding Wrapper
+# Section A: 100% Local Embeddings (Zero Google Embedding API Quota Usage)
 # ---------------------------------------------------------------------------
 class LocalONNXEmbeddings(Embeddings):
     """Local ONNX-based embedding model (all-MiniLM-L6-v2). Zero API quota limits."""
@@ -24,28 +24,27 @@ class LocalONNXEmbeddings(Embeddings):
         self._fn = ef.DefaultEmbeddingFunction()
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        cleaned = [t.strip() if t.strip() else "empty" for t in texts]
+        cleaned = [t.strip() if t.strip() else "recipe" for t in texts]
         return self._fn(cleaned)
 
     def embed_query(self, text: str) -> List[float]:
-        cleaned = text.strip() if text.strip() else "empty"
+        cleaned = text.strip() if text.strip() else "recipe"
         return self._fn([cleaned])[0]
 
 
 # ---------------------------------------------------------------------------
-# Section B: General-Purpose Document Ingestion & RAG Agent
+# Section B: Core Document Q&A RAG Agent (Problem Statement 8)
 # ---------------------------------------------------------------------------
 class RecipeRAGAgent:
-    """
-    General-purpose RAG agent designed to handle ANY unstructured recipe document
-    (PDFs, TXT files, cookbooks, messy notes, blogs, scanned text).
-    """
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError("Google API Key not found. Please provide an API key.")
         
+        # Local embeddings to prevent any 429 quota exhaustion
         self.embeddings = LocalONNXEmbeddings()
+        
+        # Gemini 2.5 Flash for fast, expert culinary intelligence
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=self.api_key,
@@ -54,13 +53,10 @@ class RecipeRAGAgent:
         self.vector_store: Optional[Chroma] = None
         self.indexed_files: List[str] = []
         self.total_chunks: int = 0
-        self.doc_summary: str = ""
+        self.doc_name: str = ""
 
     def index_documents(self, file_paths: List[str]) -> int:
-        """
-        Load, chunk, and index ANY unstructured recipe document into ChromaDB.
-        Works with any PDF layout, arbitrary TXT, multi-page cookbooks, or single recipe sheets.
-        """
+        """Loads and indexes any PDF or TXT document into local Chroma vector store."""
         all_docs = []
         for path in file_paths:
             if not os.path.exists(path):
@@ -75,13 +71,13 @@ class RecipeRAGAgent:
                 for d in docs:
                     d.metadata["source_file"] = base_name
                 all_docs.extend(docs)
+                self.doc_name = base_name
             except Exception as e:
-                print(f"Warning: Error loading {path}: {e}")
+                print(f"Warning: Could not load {path}: {e}")
 
         if not all_docs:
-            raise ValueError("Could not read any text from the provided file. Please verify the document.")
+            raise ValueError("No text could be extracted from the document.")
 
-        # Robust text chunking that adapts to any document structure (paragraphs, bullet points, headers)
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=150,
@@ -89,7 +85,7 @@ class RecipeRAGAgent:
         )
         splits = text_splitter.split_documents(all_docs)
 
-        # In-memory vector store
+        # In-memory Chroma vector store
         self.vector_store = Chroma.from_documents(
             documents=splits,
             embedding=self.embeddings
@@ -98,25 +94,23 @@ class RecipeRAGAgent:
         self.total_chunks = len(splits)
         return len(splits)
 
-    def summarize_document(self) -> str:
-        """Dynamically analyzes whatever document is loaded and summarizes its recipes and culinary contents."""
+    def get_document_overview(self) -> str:
+        """Extracts a quick overview of what recipes and topics are in the document."""
         if not self.vector_store:
-            return "No document loaded."
-
-        # Fetch sample chunks across the document
-        retriever = self.vector_store.as_retriever(search_kwargs={"k": 6})
-        sample_docs = retriever.invoke("recipes ingredients cooking meals dishes food table of contents")
-        sample_text = "\n\n".join([d.page_content for d in sample_docs[:6]])
+            return "No document indexed."
+        
+        retriever = self.vector_store.as_retriever(search_kwargs={"k": 5})
+        sample_docs = retriever.invoke("recipes ingredients meals cooking food table of contents")
+        sample_text = "\n\n".join([d.page_content for d in sample_docs])
 
         prompt = ChatPromptTemplate.from_template(
-            "Based on the following excerpts from an uploaded document, provide a 2-3 sentence summary of what this cookbook or document contains and list 4-6 key dishes or topics mentioned:\n\n{text}"
+            "Summarize in 2 sentences what recipes/content this document contains and list 4-5 sample dishes:\n\n{text}"
         )
         chain = prompt | self.llm | StrOutputParser()
         try:
-            self.doc_summary = chain.invoke({"text": sample_text})
-            return self.doc_summary
+            return chain.invoke({"text": sample_text})
         except Exception:
-            return "Custom recipe document loaded and indexed successfully."
+            return "Document indexed successfully. Ready to answer recipe queries."
 
     def query(
         self,
@@ -124,16 +118,17 @@ class RecipeRAGAgent:
         dietary_restriction: str = "None",
         available_ingredients: str = "",
         servings: int = 4,
-        max_time_mins: Optional[int] = None
-    ) -> dict:
+        max_time_mins: Optional[int] = None,
+        cuisine_preference: str = "Any"
+    ) -> Dict[str, Any]:
         """
-        Answers natural language queries strictly using retrieved document context,
-        applying agentic adaptations (dietary restrictions, pantry constraints, servings scaling).
+        Executes semantic search over unstructured document chunks and generates
+        comprehensive, personalized cooking guidance fulfilling all Problem Statement 8 goals.
         """
         if not self.vector_store:
-            raise ValueError("No document indexed. Please upload or select a document first.")
+            raise ValueError("No document indexed. Please upload or select a document.")
 
-        # 1. Semantic search across unstructured chunks
+        # 1. Retrieve top-k relevant chunks
         retriever = self.vector_store.as_retriever(search_kwargs={"k": 5})
         relevant_docs = retriever.invoke(question)
         
@@ -146,45 +141,47 @@ class RecipeRAGAgent:
             
         context = "\n\n".join(context_parts)
 
-        # 2. Comprehensive Agentic Prompt
-        system_prompt = """You are an expert AI Culinary Chef and Document Q&A Recipe Generator Agent.
-Your role is to read the unstructured document excerpts provided below, extract relevant recipe information, and answer the user's request with culinary precision.
+        # 2. Structured Agent Prompt
+        system_prompt = """You are an expert AI Culinary Chef and Document Q&A Recipe Generator Agent (Problem Statement 8).
+Your mission is to answer user recipe queries by retrieving relevant text from the provided document context and adapting the recipes according to user constraints.
 
-DOCUMENT CONTEXT (Extracted from uploaded unstructured file):
+DOCUMENT CONTEXT (Extracted from unstructured cookbook / recipe file):
 {context}
 
 USER CONSTRAINTS:
 - Dietary Restrictions: {dietary_restriction}
-- Available Ingredients in Pantry: {available_ingredients}
+- Available Pantry Ingredients: {available_ingredients}
 - Target Servings: {servings}
-- Max Cooking Time Limit: {max_time_mins}
+- Max Cooking Time: {max_time_mins}
+- Cuisine / Flavor Preference: {cuisine_preference}
 
-USER REQUEST / QUESTION:
+USER REQUEST:
 {question}
 
-Please structure your response clearly using the following markdown sections:
+Deliver your response in clean, beautiful GitHub Markdown with the following 5 structured sections:
 
 ### 1. 🍳 Recipe Title & Document Match
-- Name of the recipe
-- Exact source location (Mention the document file and page number from the context)
-- Prep Time, Cook Time, Total Time, Servings (scaled for {servings})
+- **Recipe Name:** (Name of the recipe from or inspired by the document)
+- **Document Source:** (Exact document file name and Page Number from the context)
+- **Timing & Yield:** Prep Time: [X mins] | Cook Time: [Y mins] | Total Time: [Z mins] | Scaled for **{servings} servings**
 
 ### 2. 🥗 Ingredients & Smart Substitutions
-- List of ingredients extracted from the document, accurately scaled for {servings} servings.
-- If user specified dietary restrictions ({dietary_restriction}) or available pantry ingredients, highlight the substitutions made.
-- Explain functionally why each substitution works (e.g., binds like eggs, sweetens like sugar, replaces dairy).
+- List all ingredients scaled precisely for **{servings} servings**.
+- If dietary restrictions ({dietary_restriction}) or pantry constraints are specified, explicitly highlight which ingredients were substituted and explain **why the substitution works functionally** (e.g. sweetness, texture, binding, moisture).
 
 ### 3. ⏱️ Step-by-Step Cooking Instructions
-- Clear, numbered step-by-step cooking instructions based on the document.
-- Include any chef tips, heat control advice, or techniques found in the document.
+- Provide numbered, chronological, easy-to-follow cooking steps based on the document.
+- Include **💡 Pro Chef Tips** for heat control, texture, or flavor enhancement.
 
 ### 4. 📊 Estimated Nutritional Facts (Per Serving)
-- Calories, Protein, Carbohydrates, Fats, Fiber (based on document or estimated for scaled portion).
+- **Calories:** ~[X] kcal
+- **Protein:** ~[X] g | **Carbs:** ~[X] g | **Fats:** ~[X] g | **Dietary Fiber:** ~[X] g
+- **Dietary Highlights:** (e.g. Sugar-Free, High-Protein, Low-Sodium, Heart-Healthy)
 
 ### 5. 🛒 Smart Shopping List
-- Clear bulleted checklist of ingredients needed.
+- A clean bulleted checklist of items needed to prepare this dish (accounting for available pantry items).
 
-If the user asks a general question (e.g. "What recipes are in this document?" or "Summarize the dishes"), provide a comprehensive, organized overview of what is in the document context.
+If the user query is an open-ended question (e.g. "What dishes are in this file?"), provide a rich, structured catalog of the recipes found in the document.
 """
 
         prompt = ChatPromptTemplate.from_template(system_prompt)
@@ -196,6 +193,7 @@ If the user asks a general question (e.g. "What recipes are in this document?" o
             "available_ingredients": available_ingredients if available_ingredients else "Standard pantry ingredients",
             "servings": str(servings),
             "max_time_mins": f"{max_time_mins} minutes" if max_time_mins else "No strict limit",
+            "cuisine_preference": cuisine_preference if cuisine_preference != "Any" else "Standard",
             "question": question
         })
 
@@ -203,7 +201,7 @@ If the user asks a general question (e.g. "What recipes are in this document?" o
             "answer": response,
             "sources": [
                 {
-                    "content": d.page_content[:300] + "...",
+                    "content": d.page_content[:250] + "...",
                     "file": d.metadata.get("source_file", "Document"),
                     "page": d.metadata.get("page", None)
                 }
