@@ -1,6 +1,6 @@
 ﻿import os
-import json
-import re
+import time
+import ssl
 from typing import List, Dict, Optional, Any
 from dotenv import load_dotenv
 
@@ -15,11 +15,9 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.embeddings import Embeddings
 import chromadb.utils.embedding_functions as ef
 
-# ---------------------------------------------------------------------------
-# Section A: 100% Local Embeddings (Zero Google Embedding API Quota Usage)
-# ---------------------------------------------------------------------------
+
 class LocalONNXEmbeddings(Embeddings):
-    """Local ONNX-based embedding model (all-MiniLM-L6-v2). Zero API quota limits."""
+    """Local embedding wrapper using all-MiniLM-L6-v2."""
     def __init__(self):
         self._fn = ef.DefaultEmbeddingFunction()
 
@@ -32,28 +30,22 @@ class LocalONNXEmbeddings(Embeddings):
         return self._fn([cleaned])[0]
 
 
-# ---------------------------------------------------------------------------
-# Section B: Core Document Q&A RAG Agent (Problem Statement 8)
-# ---------------------------------------------------------------------------
 class RecipeRAGAgent:
+    """Document Q&A RAG Agent for personalized recipe generation."""
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
-            raise ValueError("Google API Key not found. Please provide an API key.")
+            raise ValueError("Google API Key not found.")
         
         self.embeddings = LocalONNXEmbeddings()
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=self.api_key,
-            temperature=0.2
-        )
+        self.models_to_try = ["gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-3.5-flash"]
         self.vector_store: Optional[Chroma] = None
         self.indexed_files: List[str] = []
         self.total_chunks: int = 0
         self.doc_name: str = ""
 
     def index_documents(self, file_paths: List[str]) -> int:
-        """Loads and indexes any PDF or TXT document into local Chroma vector store."""
+        """Parses and indexes PDF or TXT documents into vector store."""
         all_docs = []
         for path in file_paths:
             if not os.path.exists(path):
@@ -70,7 +62,7 @@ class RecipeRAGAgent:
                 all_docs.extend(docs)
                 self.doc_name = base_name
             except Exception as e:
-                print(f"Warning: Could not load {path}: {e}")
+                print(f"Error loading {path}: {e}")
 
         if not all_docs:
             raise ValueError("No text could be extracted from the document.")
@@ -91,22 +83,30 @@ class RecipeRAGAgent:
         return len(splits)
 
     def get_document_overview(self) -> str:
-        """Extracts a quick overview of what recipes and topics are in the document."""
+        """Summarizes document content with retry."""
         if not self.vector_store:
             return "No document indexed."
         
-        retriever = self.vector_store.as_retriever(search_kwargs={"k": 5})
-        sample_docs = retriever.invoke("recipes ingredients meals cooking food table of contents")
+        retriever = self.vector_store.as_retriever(search_kwargs={"k": 4})
+        sample_docs = retriever.invoke("recipes ingredients meals cooking food")
         sample_text = "\n\n".join([d.page_content for d in sample_docs])
 
         prompt = ChatPromptTemplate.from_template(
-            "Summarize in 2 sentences what recipes/content this document contains and list 4-5 sample dishes:\n\n{text}"
+            "Summarize the recipes and topics in this document in 2 concise sentences:\n\n{text}"
         )
-        chain = prompt | self.llm | StrOutputParser()
-        try:
-            return chain.invoke({"text": sample_text})
-        except Exception:
-            return "Document indexed successfully. Ready to answer recipe queries."
+        
+        for model_name in self.models_to_try:
+            try:
+                llm = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=self.api_key,
+                    temperature=0.2
+                )
+                chain = prompt | llm | StrOutputParser()
+                return chain.invoke({"text": sample_text})
+            except Exception:
+                continue
+        return "Document indexed successfully. Ready to answer recipe queries."
 
     def query(
         self,
@@ -117,14 +117,10 @@ class RecipeRAGAgent:
         max_time_mins: Optional[int] = None,
         cuisine_preference: str = "Any"
     ) -> Dict[str, Any]:
-        """
-        Executes semantic search over unstructured document chunks and generates
-        structured cooking guidance with strict pantry ingredient matching and clear layout.
-        """
+        """Queries the vector store and generates structured recipe guidance with retry logic."""
         if not self.vector_store:
             raise ValueError("No document indexed. Please upload or select a document.")
 
-        # 1. Retrieve top-k relevant chunks
         retriever = self.vector_store.as_retriever(search_kwargs={"k": 5})
         relevant_docs = retriever.invoke(question)
         
@@ -137,36 +133,30 @@ class RecipeRAGAgent:
             
         context = "\n\n".join(context_parts)
 
-        # 2. Strict Pantry & Agentic Prompt
-        system_prompt = """You are an expert AI Culinary Chef and Document Q&A Recipe Generator Agent (Problem Statement 8).
-Your mission is to answer user recipe queries by retrieving relevant text from the provided document context and adapting the recipes according to user constraints.
+        system_prompt = """You are an intelligent culinary assistant and recipe generator.
+Use the document context below to answer the user's recipe query accurately.
 
-DOCUMENT CONTEXT:
+Document Context:
 {context}
 
-USER CONSTRAINTS:
+User Preferences:
 - Dietary Restrictions: {dietary_restriction}
 - Available Pantry Ingredients: {available_ingredients}
-- Target Servings: {servings}
+- Servings: {servings}
 - Max Cooking Time: {max_time_mins}
-- Cuisine / Flavor Preference: {cuisine_preference}
+- Cuisine Style: {cuisine_preference}
 
-USER REQUEST:
+Query:
 {question}
 
-CRITICAL RULES FOR PANTRY INGREDIENTS & SUBSTITUTIONS:
-1. If the user specified Available Pantry Ingredients ({available_ingredients}):
-   - Actively use the ingredients in their pantry!
-   - If the recipe requires an ingredient (like eggs, butter, milk, sugar) and the user has a substitute in their pantry (e.g., apples/applesauce for eggs/sugar, oats, olive oil, bananas), explicitly substitute it and explain the culinary chemistry.
-   - If they lack an essential ingredient, state clearly what is missing and put it in the "Need to Buy" shopping list.
-2. In the Shopping List, ALWAYS separate into:
-   - **✅ In Your Pantry (Already have):** [List pantry ingredients that are used in this recipe]
-   - **🛒 Need to Buy (Missing items):** [List only missing items]
+Guidelines:
+1. If the user provided available pantry ingredients ({available_ingredients}), prioritize using them and suggest functional substitutions for missing items.
+2. In the Shopping List, separate items already in the pantry from items needed to buy.
 
-Deliver your response using the following clean, beautifully formatted sections:
+Format your response in clean Markdown with these sections:
 
-## 🍳 Recipe: [Recipe Title]
-- **Document Source:** [Exact Document & Page Number]
+## 🍳 Recipe: [Recipe Name]
+- **Document Source:** [File Name and Page Number]
 - **Prep Time:** [X mins] | **Cook Time:** [Y mins] | **Total Time:** [Z mins]
 - **Portion Size:** Scaled for **{servings} servings**
 
@@ -174,20 +164,20 @@ Deliver your response using the following clean, beautifully formatted sections:
 
 ### 🥗 Ingredients & Smart Substitutions
 (Scaled for **{servings} servings**)
-- [List every ingredient with exact measurement]
+- [Ingredients with exact quantities]
 
 **💡 Smart Substitutions & Pantry Adaptation:**
-- **Adaptation:** [Explicitly explain any dietary or pantry substitutions made, e.g. how apples/bananas replace eggs or sugar for moisture/binding, almond milk for dairy, etc.]
-- **Why it works:** [Culinary explanation of the chemistry and flavor profile]
+- **Adaptation:** [Explain dietary or pantry substitutions made]
+- **Why it works:** [Culinary explanation]
 
 ---
 
 ### ⏱️ Step-by-Step Cooking Instructions
-1. **[Step Name]:** [Detailed instruction]
-2. **[Step Name]:** [Detailed instruction]
-3. **[Step Name]:** [Detailed instruction]
+1. **[Step Name]:** [Instructions]
+2. **[Step Name]:** [Instructions]
+3. **[Step Name]:** [Instructions]
 
-> 💡 **Chef Pro Tip:** [Practical tip on heat control, texture, or flavor enhancement]
+> 💡 **Chef Tip:** [Practical tip for texture, flavor, or heat control]
 
 ---
 
@@ -200,35 +190,55 @@ Deliver your response using the following clean, beautifully formatted sections:
 | **Total Fats** | ~[X] g |
 | **Dietary Fiber** | ~[X] g |
 
-**Dietary Highlights:** [e.g. Sugar-Free, High-Fiber, Vegan, Heart-Healthy]
+**Dietary Highlights:** [e.g. Sugar-Free, High-Protein, Vegan, Heart-Healthy]
 
 ---
 
 ### 🛒 Smart Shopping List
 **✅ In Your Pantry (Already Have):**
-- [Item 1 from user pantry]
-- [Item 2 from user pantry]
+- [Pantry items used]
 
 **🛒 Need to Buy (Missing Ingredients):**
-- [ ] [Missing Item 1]
-- [ ] [Missing Item 2]
+- [ ] [Missing items]
 """
 
         prompt = ChatPromptTemplate.from_template(system_prompt)
-        chain = prompt | self.llm | StrOutputParser()
+        
+        # Resilient Execution with Model & SSL Retry
+        response_text = None
+        last_err = None
+        
+        for model_name in self.models_to_try:
+            for attempt in range(2):
+                try:
+                    active_llm = ChatGoogleGenerativeAI(
+                        model=model_name,
+                        google_api_key=self.api_key,
+                        temperature=0.2,
+                        max_retries=3
+                    )
+                    chain = prompt | active_llm | StrOutputParser()
+                    response_text = chain.invoke({
+                        "context": context if context else "No document excerpts found.",
+                        "dietary_restriction": dietary_restriction if dietary_restriction != "None" else "Standard / No restrictions",
+                        "available_ingredients": available_ingredients if available_ingredients else "None specified (Standard pantry)",
+                        "servings": str(servings),
+                        "max_time_mins": f"{max_time_mins} minutes" if max_time_mins else "No strict limit",
+                        "cuisine_preference": cuisine_preference if cuisine_preference != "Any" else "Standard",
+                        "question": question
+                    })
+                    break
+                except Exception as err:
+                    last_err = err
+                    time.sleep(1)
+            if response_text:
+                break
 
-        response = chain.invoke({
-            "context": context if context else "No document excerpts found.",
-            "dietary_restriction": dietary_restriction if dietary_restriction != "None" else "Standard / No restrictions",
-            "available_ingredients": available_ingredients if available_ingredients else "None specified (Standard pantry)",
-            "servings": str(servings),
-            "max_time_mins": f"{max_time_mins} minutes" if max_time_mins else "No strict limit",
-            "cuisine_preference": cuisine_preference if cuisine_preference != "Any" else "Standard",
-            "question": question
-        })
+        if not response_text:
+            raise last_err or RuntimeError("Connection retry limit reached. Please try prompting again.")
 
         return {
-            "answer": response,
+            "answer": response_text,
             "sources": [
                 {
                     "content": d.page_content[:250] + "...",

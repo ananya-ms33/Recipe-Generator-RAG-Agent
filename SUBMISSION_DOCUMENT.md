@@ -28,81 +28,77 @@ Food enthusiasts and culinary professionals often rely on unstructured recipe do
 ## Slide 3: Proposed Solution
 
 **Proposed Solution -**
-We built an intelligent Document Q&A RAG (Retrieval-Augmented Generation) Agent integrated with Langflow and Streamlit. The solution delivers:
-- **Ingest & Index Recipe Documents:** Parse cookbooks, PDFs, and uploaded recipe notes into a vector knowledge base.
-- **Enable Conversational Q&A:** Allow users to ask natural language questions (e.g., *"How can I make a sugar-free version of chocolate cake?"*) and receive recipe-aware answers.
-- **Create a Personalized & Agentic Layer:** Adapt recipes dynamically based on dietary restrictions (Vegan, Keto, Gluten-free, Sugar-free), serving size scaling, and available pantry items.
-- **Visualize Cooking Guidance:** Present structured step-by-step instructions, functional ingredient substitutions, estimated nutritional facts, and an automated shopping checklist.
+We built a Document Q&A RAG (Retrieval-Augmented Generation) Agent that acts as an intelligent recipe generator. The solution:
+• **Ingests & Indexes Recipe Documents:** Parses cookbooks, PDFs, and uploaded recipe notes into a searchable vector knowledge base.
+• **Enables Conversational Q&A:** Allows users to ask natural language questions (e.g., *"How can I make a sugar-free version of chocolate cake?"*) and receive precise, recipe-aware answers.
+• **Creates a Personalized & Agentic Layer:** Adapts recipes dynamically based on dietary restrictions (Vegan, Keto, Gluten-Free, Sugar-Free), serving size scaling, and available pantry items.
+• **Visualizes Cooking Guidance:** Presents structured step-by-step instructions, functional ingredient substitutions, estimated nutritional facts, and an automated shopping checklist.
 
 ---
 
 ## Slide 4: Technology Used
 
-**Technology Used:**
-- **Langflow:** Visual drag-and-drop orchestration of RAG pipelines, prompts, and agent nodes.
-- **LangChain:** Framework for document loading, text chunking, and LLM chaining.
-- **LLM Model:** Google Gemini (`gemini-flash-latest` / `gemini-2.5-flash`) for real-time culinary reasoning and adaptation.
-- **Vector Knowledge Base:** Ingests unstructured recipe corpora for semantic similarity search.
-- **Streamlit:** Interactive web interface for cookbook uploads, preference filtering, and conversational recipe interaction.
-- **PyPDF / Text Parsers:** Document parsing for PDF and TXT cookbooks.
+**Technology Used**
+• **LangChain & Langflow:** Visual and programmatic orchestration of RAG pipelines, dynamic prompt templates, and agentic workflows.
+• **Language Model:** Google Gemini (`gemini-flash-latest`) for culinary reasoning and recipe adaptation.
+• **Vector Store & Knowledge Base:** ChromaDB with local ONNX embeddings (`all-MiniLM-L6-v2`) for quota-free semantic document retrieval.
+• **User Interface:** Streamlit interactive web application with real-time Q&A, dietary filters, serving scaler, and document uploader.
+• **Document Parsers:** PyPDF and TextLoader for parsing PDF and TXT cookbooks.
 
 ---
 
 ## Slide 5: Langflow Component Used
 
-**Langflow Component Used -**
-1. **Chat Input** – Interface where users enter recipe questions, dietary preferences, or pantry ingredients.
-2. **Knowledge Component (`CookBooks`)** – Ingests and performs semantic vector search over uploaded recipe files.
-3. **Parser Component** – Extracts and standardizes retrieved document chunks (`Text: {content}`) into structured context.
-4. **Prompt Component** – Combines dynamic `{context}` and `{question}` variables with chef instructions.
-5. **Agent Component (`gemini-flash-latest`)** – Orchestrates culinary reasoning, recipe adaptation, ingredient scaling, and nutrition estimation.
-6. **Chat Output** – Emits structured markdown responses (steps, substitutions, nutrition, shopping list).
+**Langflow component Used -**
+1) **Chat Input** – Interface where users enter recipe questions, dietary preferences, or pantry ingredients.
+2) **Knowledge Component (`CookBooks`)** – Ingests and performs semantic vector search over uploaded recipe files.
+3) **Parser Component** – Extracts and formats retrieved document chunks (`Text: {content}`) into structured context.
+4) **Prompt Component** – Combines dynamic `{context}` and `{question}` variables with chef instructions.
+5) **Agent Component (`gemini-flash-latest`)** – Orchestrates culinary reasoning, recipe adaptation, ingredient scaling, and nutrition estimation.
+6) **Chat Output** – Emits structured markdown responses (steps, substitutions, nutrition, shopping list).
 
 ---
 
 ## Slide 6: Langflow Workflow
 
-**Langflow Workflow -**
+**Langflow workflow -**
+*(Paste the screenshot of your Langflow canvas here)*
 
-```
-[Chat Input] ───────────────┬───────────────────────────┐
-                            │ (Query)                   │ (Question)
-                            ▼                           ▼
-                   [Knowledge: CookBooks]      [Prompt Template]
-                            │                           ▲
-                            ▼ (Results)                 │ (Context)
-                     [Parser Node] ─────────────────────┘
-                            │
-                            ▼
-                    [Agent Component]
-                 (gemini-flash-latest)
-                            │
-                            ▼
-                     [Chat Output]
-```
+**Workflow Description:**
+• **Chat Input** connects to **Knowledge** (Search Query) and **Prompt** (`{question}`).
+• **Knowledge Base** retrieves relevant recipe text and sends `Results` to **Parser**.
+• **Parser** feeds structured `Parsed Text` as `{context}` into **Prompt**.
+• **Prompt** forwards the enriched prompt to **Agent** (`gemini-flash-latest`).
+• **Agent** processes the instructions and outputs response to **Chat Output**.
 
 ---
 
 ## Slide 7: Future Scope
 
-**Future Scope:**
-- **Multimodal Ingredient Vision:** Upload a photo of the pantry/refrigerator to detect ingredients automatically and suggest matching recipes.
-- **Voice-Guided Hands-Free Assistant:** Step-by-step voice guidance and timer alerts for hands-free cooking in the kitchen.
-- **Automated Grocery Ordering:** One-click integration with grocery delivery services (Instacart, Amazon Fresh) to order missing ingredients.
-- **Nutritional Tracking Integration:** Sync recipe macronutrients and calories with fitness apps (Apple Health, MyFitnessPal).
+**Future Scope**
+• **Multimodal Ingredient Scanning:** Upload photos of your refrigerator/pantry to automatically recognize ingredients and suggest recipes.
+• **Voice-Guided Cooking Mode:** Hands-free step-by-step audio instructions with interactive timers during active cooking.
+• **Smart Grocery Delivery Integration:** One-click export of the generated shopping list to online grocery services (e.g., Instacart, Blinkit).
+• **Nutritional & Fitness Sync:** Directly sync calculated recipe calories and macronutrients to health apps.
 
 ---
 
 ## Slide 8: Reference / GitHub Link
 
-**Reference / GitHub Link:**
-- Public GitHub Repository Format: `https://github.com/AnanyaMS/Recipe-Generator-RAG-Agent`
-- Tested and verified with local Langflow server and Streamlit frontend.
-- Includes sample cookbooks, prompt templates, API connectors, and CLI runner.
+**Reference / GitHub Link**
+• **GitHub Repository:**  
+  `https://github.com/ananya-ms33/Recipe-Generator-RAG-Agent.git`
+
+• **Tested & Working Features:**  
+  - Complete Langflow Flow JSON & visual canvas setup  
+  - Streamlit web frontend (`app.py`) with real-time Q&A and PDF upload  
+  - Local ONNX Embeddings with zero quota limitations  
+  - Built-in recipe knowledge base with dietary adaptation and pantry ingredient substitution  
 
 ---
 
 ## Slide 9: Thank You!
 
-**Thank You!**  
-*Thank you for your time and interest.*
+# Thank You!
+
+**Thank you for your time and interest.**
