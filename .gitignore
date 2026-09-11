@@ -1,0 +1,21 @@
+﻿# Environment variables & API keys
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Chroma DB vector cache
+.chroma/
+chroma_db/
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# OS specific
+.DS_Store
+Thumbs.db
