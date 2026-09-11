@@ -1,57 +1,40 @@
-﻿# 🍳 Document Q&A RAG Agent for Recipe Generator
+﻿# AI Recipe Generator & Document Q&A Agent
 
-**Problem Statement No. 8:** Document Q&A RAG Agent for Recipe Generator  
-**Student Name:** ANANYA M S  
-**Roll No:** 2024103625  
-**Email:** ananyams003@gmail.com  
-**WhatsApp / Mobile:** 6369779752  
-**GitHub Repository:** [https://github.com/ananya-ms33/Recipe-Generator-RAG-Agent](https://github.com/ananya-ms33/Recipe-Generator-RAG-Agent)
+An intelligent culinary assistant that parses unstructured recipe documents (cookbooks, PDFs, text notes), performs semantic retrieval using Retrieval-Augmented Generation (RAG), and adapts recipes dynamically based on user dietary needs, serving sizes, and available pantry ingredients.
 
 ---
 
 ## 📌 Project Overview
-Food enthusiasts and culinary professionals frequently struggle with unstructured recipe documents, cookbooks, blogs, and user notes. This project implements a **Retrieval-Augmented Generation (RAG)** system that:
-1. **Ingests & Indexes Recipe Documents:** Parses cookbooks and documents (PDF/TXT) into local vector embeddings.
-2. **Enables Conversational Q&A:** Answers culinary queries with precise citations.
-3. **Applies Agentic Personalization:** Adapts recipes to dietary restrictions (Sugar-Free, Vegan, Gluten-Free, Keto, Dairy-Free), available pantry items, and serving sizes.
-4. **Delivers Structured Cooking Guidance:** Generates step-by-step instructions, functional ingredient substitutions, nutritional estimates, and smart grocery checklists.
+
+Food enthusiasts and culinary professionals frequently deal with unstructured recipe collections scattered across cookbooks, blogs, and notes. This project builds an agentic system that allows users to query, adapt, and generate personalized recipes from any uploaded document.
+
+### Key Features
+- **Document Ingestion & Indexing:** Parses and chunks multi-page PDFs and text cookbooks into a local vector store using ChromaDB.
+- **Conversational Q&A (RAG):** Answers natural language queries strictly using document context and provides exact source page citations.
+- **Agentic Personalization Layer:**
+  - **Dietary Adaptation:** Customizes recipes for Sugar-Free, Vegan, Vegetarian, Gluten-Free, Keto, Dairy-Free, and High-Protein diets.
+  - **Pantry Ingredient Substitution:** Intelligently substitutes missing ingredients using items you currently have at home (e.g., using apples for eggs/sugar) and explains the culinary reasoning.
+  - **Mathematical Serving Scaler:** Automatically scales ingredient portions from 1 to 12 servings.
+- **Structured Cooking Guidance:** Generates step-by-step instructions, chef pro tips, estimated nutritional breakdowns, and a smart split grocery list (Items in Pantry vs. Items to Buy).
 
 ---
 
-## 🏗️ Architecture & Workflow
+## 🛠️ Tech Stack
 
-```
-[User Query & Document Upload]
-              │
-              ▼
-    [Document Parser & Chunking]
-              │
-              ▼
- [ChromaDB Vector Store (Local ONNX Embeddings)]
-              │ (Semantic Retrieval)
-              ▼
- [Personalization & Agent Prompt Template]
- (Diet Filter, Serving Scaler, Pantry Constraints)
-              │
-              ▼
-  [Google Gemini Model (gemini-flash-latest)]
-              │
-              ▼
- [Streamlit Web Interface]
-  - Step-by-Step Cooking Guide
-  - Smart Ingredient Substitutions
-  - Macro & Nutrition Estimates
-  - Smart Shopping List (Pantry vs Need to Buy)
-```
+- **Frontend:** Streamlit
+- **RAG & Agent Orchestration:** LangChain, Langflow
+- **LLM Reasoning:** Google Gemini (`gemini-flash-latest`)
+- **Vector Database & Embeddings:** ChromaDB with local ONNX embeddings (`all-MiniLM-L6-v2`)
+- **Document Processing:** PyPDF, TextLoader
 
 ---
 
 ## 🚀 Getting Started
 
-### 1. Configure Environment
-Create a `.env` file in the root directory:
-```env
-GOOGLE_API_KEY=your_google_gemini_api_key
+### 1. Clone the Repository
+```bash
+git clone https://github.com/ananya-ms33/Recipe-Generator-RAG-Agent.git
+cd Recipe-Generator-RAG-Agent
 ```
 
 ### 2. Install Dependencies
@@ -59,15 +42,33 @@ GOOGLE_API_KEY=your_google_gemini_api_key
 pip install -r requirements.txt
 ```
 
-### 3. Run the Web Application
+### 3. Configure API Key
+Create a `.env` file in the root folder:
+```env
+GOOGLE_API_KEY=your_google_gemini_api_key
+```
+
+### 4. Run the Web Application
 ```bash
 streamlit run app.py
 ```
-Open **http://localhost:8501** in your browser.
+Open [http://localhost:8501](http://localhost:8501) in your browser.
+
+### 5. (Optional) Run via Terminal / CLI
+```bash
+python cli_agent.py
+```
 
 ---
 
-## 🔮 Future Scope
-- Multimodal ingredient scanning via image input.
-- Real-time voice-guided hands-free cooking assistant.
-- Direct grocery delivery integration (Instacart/Blinkit API).
+## 📁 Repository Structure
+
+```
+├── app.py               # Streamlit web application
+├── rag_engine.py        # Core RAG retrieval & agentic reasoning pipeline
+├── cli_agent.py         # Terminal-based interactive runner
+├── cookbook_pdf.pdf     # Sample multi-page PDF cookbook (Food Hero)
+├── cookbook.txt         # Sample structured TXT cookbook
+├── requirements.txt     # Project dependencies
+└── README.md            # Documentation
+```
