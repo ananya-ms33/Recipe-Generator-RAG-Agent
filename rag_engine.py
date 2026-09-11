@@ -1,5 +1,5 @@
 ﻿import os
-import tempfile
+import sys
 from typing import List, Optional
 from dotenv import load_dotenv
 
@@ -23,7 +23,6 @@ class LocalONNXEmbeddings(Embeddings):
         self._fn = ef.DefaultEmbeddingFunction()
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # Clean empty texts
         cleaned = [t.strip() if t.strip() else "empty" for t in texts]
         return self._fn(cleaned)
 
@@ -36,12 +35,9 @@ class RecipeRAGAgent:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
-            raise ValueError("Google API Key not found. Please provide an API key or set GOOGLE_API_KEY in .env.")
+            raise ValueError("Google API Key not found. Please provide an API key.")
         
-        # Use local ONNX embeddings so uploading PDFs never exhausts Google API quotas
         self.embeddings = LocalONNXEmbeddings()
-        
-        # Use Gemini 2.5 Flash for chef reasoning
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=self.api_key,
@@ -49,8 +45,9 @@ class RecipeRAGAgent:
         )
         self.vector_store: Optional[Chroma] = None
         self.indexed_files: List[str] = []
+        self.total_chunks: int = 0
 
-    def index_documents(self, file_paths: List[str]):
+    def index_documents(self, file_paths: List[str]) -> int:
         """Load, chunk, and index recipe documents (PDF or TXT) into ChromaDB."""
         all_docs = []
         for path in file_paths:
@@ -60,29 +57,32 @@ class RecipeRAGAgent:
                 if path.lower().endswith(".pdf"):
                     loader = PyPDFLoader(path)
                 else:
-                    loader = TextLoader(path, encoding="utf-8")
+                    loader = TextLoader(path, encoding="utf-8", autodetect_encoding=True)
                 docs = loader.load()
+                # Attach source metadata
+                base_name = os.path.basename(path)
+                for d in docs:
+                    d.metadata["source_file"] = base_name
                 all_docs.extend(docs)
             except Exception as e:
                 print(f"Warning: Could not load {path}: {e}")
 
         if not all_docs:
-            raise ValueError("No recipe documents could be loaded. Please upload a valid PDF or TXT file.")
+            raise ValueError("No valid recipe documents could be loaded.")
 
-        # Chunk documents with healthy size to keep whole recipes intact
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1200,
-            chunk_overlap=150,
-            separators=["\n## ", "\n# ", "\n---\n", "\n\n", "\n", " "]
+            chunk_size=1400,
+            chunk_overlap=200,
+            separators=["\n## ", "\n# ", "\nRecipe", "\n---\n", "\n\n", "\n", " "]
         )
         splits = text_splitter.split_documents(all_docs)
 
-        # In-memory Chroma vector store with Local Embeddings
         self.vector_store = Chroma.from_documents(
             documents=splits,
             embedding=self.embeddings
         )
         self.indexed_files = file_paths
+        self.total_chunks = len(splits)
         return len(splits)
 
     def query(
@@ -95,14 +95,22 @@ class RecipeRAGAgent:
     ) -> dict:
         """Query the RAG system and generate structured, personalized recipe guidance."""
         if not self.vector_store:
-            raise ValueError("No documents indexed. Please upload or index recipe documents first.")
+            raise ValueError("No documents indexed. Please index recipes first.")
 
-        # 1. Semantic search
+        # 1. Semantic search for top relevant chunks
         retriever = self.vector_store.as_retriever(search_kwargs={"k": 4})
         relevant_docs = retriever.invoke(question)
-        context = "\n\n".join([d.page_content for d in relevant_docs])
+        
+        context_parts = []
+        for d in relevant_docs:
+            source = d.metadata.get("source_file", "Cookbook")
+            page = d.metadata.get("page", "")
+            page_info = f" (Page {page + 1})" if isinstance(page, int) else ""
+            context_parts.append(f"--- [Source: {source}{page_info}] ---\n{d.page_content}")
+            
+        context = "\n\n".join(context_parts)
 
-        # 2. Expert Chef Prompt Template
+        # 2. System prompt
         system_prompt = """You are an expert AI Culinary Chef and Recipe Generator Agent.
 Your task is to answer user queries by retrieving recipes from the provided knowledge base context and personalizing them according to user constraints.
 
@@ -122,21 +130,21 @@ Please structure your response clearly using the following markdown sections:
 
 ### 1. 🍳 Recipe Title & Overview
 - Name of the recipe (adapted or retrieved)
-- Source match / origin from the cookbook
-- Prep Time, Cook Time, Total Time, Servings
+- Source match / origin from the cookbook context (mention page/cookbook if available)
+- Prep Time, Cook Time, Total Time, Servings (scaled for {servings})
 
 ### 2. 🥗 Adapted Ingredients & Smart Substitutions
 - Precise list of ingredients scaled for {servings} servings.
 - Highlight substitutions made to satisfy dietary restrictions ({dietary_restriction}) or available pantry ingredients.
-- Mention why each substitution works functionally (e.g. applesauce/monk fruit for sugar, almond milk for dairy, almond flour for gluten).
+- Mention why each substitution works functionally (e.g. applesauce/monk fruit for sugar, almond milk for dairy, almond flour for gluten, tofu/beans for meat).
 
 ### 3. ⏱️ Step-by-Step Cooking Instructions
 - Clear, numbered step-by-step instructions.
-- Pro tips for cooking technique, heat control, or texture.
+- Pro tips for cooking technique, heat control, flavor enhancement, or texture.
 
 ### 4. 📊 Estimated Nutritional Facts (Per Serving)
 - Calories, Protein, Carbohydrates, Fats, Dietary Fiber (estimated).
-- Key dietary highlights (e.g. Sugar-free, High-protein, Low-carb).
+- Key dietary highlights (e.g. Sugar-free, High-protein, Low-carb, Heart-healthy).
 
 ### 5. 🛒 Smart Shopping List
 - Bulleted grocery checklist of missing ingredients needed to prepare this dish.
@@ -158,5 +166,12 @@ If the requested recipe is not directly in the knowledge base, use the culinary 
 
         return {
             "answer": response,
-            "sources": [d.page_content[:150] + "..." for d in relevant_docs]
+            "sources": [
+                {
+                    "content": d.page_content[:200] + "...",
+                    "file": d.metadata.get("source_file", "Cookbook"),
+                    "page": d.metadata.get("page", None)
+                }
+                for d in relevant_docs
+            ]
         }
