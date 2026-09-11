@@ -1,6 +1,5 @@
 ﻿import os
 import time
-import ssl
 from typing import List, Dict, Optional, Any
 from dotenv import load_dotenv
 
@@ -38,7 +37,8 @@ class RecipeRAGAgent:
             raise ValueError("Google API Key not found.")
         
         self.embeddings = LocalONNXEmbeddings()
-        self.models_to_try = ["gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-3.5-flash"]
+        # High quota models
+        self.models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemma-4-26b-a4b-it"]
         self.vector_store: Optional[Chroma] = None
         self.indexed_files: List[str] = []
         self.total_chunks: int = 0
@@ -83,7 +83,7 @@ class RecipeRAGAgent:
         return len(splits)
 
     def get_document_overview(self) -> str:
-        """Summarizes document content with retry."""
+        """Summarizes document content."""
         if not self.vector_store:
             return "No document indexed."
         
@@ -92,7 +92,7 @@ class RecipeRAGAgent:
         sample_text = "\n\n".join([d.page_content for d in sample_docs])
 
         prompt = ChatPromptTemplate.from_template(
-            "Summarize the recipes and topics in this document in 2 concise sentences:\n\n{text}"
+            "Summarize what recipes and culinary topics this document covers in 2 concise sentences:\n\n{text}"
         )
         
         for model_name in self.models_to_try:
@@ -117,7 +117,7 @@ class RecipeRAGAgent:
         max_time_mins: Optional[int] = None,
         cuisine_preference: str = "Any"
     ) -> Dict[str, Any]:
-        """Queries the vector store and generates structured recipe guidance with retry logic."""
+        """Queries the vector store and generates structured recipe guidance."""
         if not self.vector_store:
             raise ValueError("No document indexed. Please upload or select a document.")
 
@@ -204,38 +204,33 @@ Format your response in clean Markdown with these sections:
 
         prompt = ChatPromptTemplate.from_template(system_prompt)
         
-        # Resilient Execution with Model & SSL Retry
         response_text = None
         last_err = None
         
         for model_name in self.models_to_try:
-            for attempt in range(2):
-                try:
-                    active_llm = ChatGoogleGenerativeAI(
-                        model=model_name,
-                        google_api_key=self.api_key,
-                        temperature=0.2,
-                        max_retries=3
-                    )
-                    chain = prompt | active_llm | StrOutputParser()
-                    response_text = chain.invoke({
-                        "context": context if context else "No document excerpts found.",
-                        "dietary_restriction": dietary_restriction if dietary_restriction != "None" else "Standard / No restrictions",
-                        "available_ingredients": available_ingredients if available_ingredients else "None specified (Standard pantry)",
-                        "servings": str(servings),
-                        "max_time_mins": f"{max_time_mins} minutes" if max_time_mins else "No strict limit",
-                        "cuisine_preference": cuisine_preference if cuisine_preference != "Any" else "Standard",
-                        "question": question
-                    })
-                    break
-                except Exception as err:
-                    last_err = err
-                    time.sleep(1)
-            if response_text:
+            try:
+                active_llm = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=self.api_key,
+                    temperature=0.2
+                )
+                chain = prompt | active_llm | StrOutputParser()
+                response_text = chain.invoke({
+                    "context": context if context else "No document excerpts found.",
+                    "dietary_restriction": dietary_restriction if dietary_restriction != "None" else "Standard / No restrictions",
+                    "available_ingredients": available_ingredients if available_ingredients else "None specified (Standard pantry)",
+                    "servings": str(servings),
+                    "max_time_mins": f"{max_time_mins} minutes" if max_time_mins else "No strict limit",
+                    "cuisine_preference": cuisine_preference if cuisine_preference != "Any" else "Standard",
+                    "question": question
+                })
                 break
+            except Exception as err:
+                last_err = err
+                continue
 
         if not response_text:
-            raise last_err or RuntimeError("Connection retry limit reached. Please try prompting again.")
+            raise last_err or RuntimeError("Failed to generate recipe.")
 
         return {
             "answer": response_text,
