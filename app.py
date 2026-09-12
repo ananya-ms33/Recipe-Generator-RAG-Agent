@@ -192,15 +192,34 @@ if user_query:
                     time_limit = max_time if max_time > 0 else None
                     # Get prior conversation history (excluding current user query)
                     prior_history = [m for m in st.session_state.messages[:-1] if m.get("role") in ["user", "assistant"]]
-                    res = rag_agent.query(
-                        question=user_query,
-                        dietary_restriction=diet,
-                        available_ingredients=pantry,
-                        servings=servings,
-                        max_time_mins=time_limit,
-                        cuisine_preference=cuisine,
-                        chat_history=prior_history
-                    )
+                    
+                    try:
+                        res = rag_agent.query(
+                            question=user_query,
+                            dietary_restriction=diet,
+                            available_ingredients=pantry,
+                            servings=servings,
+                            max_time_mins=time_limit,
+                            cuisine_preference=cuisine,
+                            chat_history=prior_history
+                        )
+                    except TypeError:
+                        # Fallback if cached instance in Streamlit runtime has old signature
+                        if prior_history:
+                            recent = prior_history[-4:]
+                            hist_text = "\n\n".join([f"{'User' if m.get('role') == 'user' else 'Assistant'}: {m.get('content', '')}" for m in recent])
+                            augmented_query = f"Previous conversation context:\n{hist_text}\n\nCurrent question: {user_query}"
+                        else:
+                            augmented_query = user_query
+                            
+                        res = rag_agent.query(
+                            question=augmented_query,
+                            dietary_restriction=diet,
+                            available_ingredients=pantry,
+                            servings=servings,
+                            max_time_mins=time_limit,
+                            cuisine_preference=cuisine
+                        )
                     
                     answer = res["answer"]
                     sources = res.get("sources", [])

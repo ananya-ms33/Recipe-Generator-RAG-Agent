@@ -116,7 +116,9 @@ class RecipeRAGAgent:
         servings: int = 4,
         max_time_mins: Optional[int] = None,
         cuisine_preference: str = "Any",
-        chat_history: Optional[List[Dict[str, str]]] = None
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        *args,
+        **kwargs
     ) -> Dict[str, Any]:
         """Queries the vector store and generates structured recipe guidance or answers follow-up questions."""
         if not self.vector_store:
