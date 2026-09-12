@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 from typing import List, Dict, Optional, Any
 from dotenv import load_dotenv
@@ -115,9 +115,10 @@ class RecipeRAGAgent:
         available_ingredients: str = "",
         servings: int = 4,
         max_time_mins: Optional[int] = None,
-        cuisine_preference: str = "Any"
+        cuisine_preference: str = "Any",
+        chat_history: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
-        """Queries the vector store and generates structured recipe guidance."""
+        """Queries the vector store and generates structured recipe guidance or answers follow-up questions."""
         if not self.vector_store:
             raise ValueError("No document indexed. Please upload or select a document.")
 
@@ -133,73 +134,78 @@ class RecipeRAGAgent:
             
         context = "\n\n".join(context_parts)
 
-        system_prompt = """You are an intelligent culinary assistant and recipe generator.
-Use the document context below to answer the user's recipe query accurately.
+        # Format conversation history
+        history_text = "No previous conversation."
+        if chat_history:
+            recent_history = chat_history[-6:] # Keep last 6 messages
+            formatted_turns = []
+            for m in recent_history:
+                role = "User" if m.get("role") == "user" else "Assistant"
+                content = m.get("content", "")
+                formatted_turns.append(f"{role}: {content}")
+            history_text = "\n\n".join(formatted_turns)
+
+        system_prompt = """You are an intelligent culinary assistant and recipe generator with multi-turn conversational memory.
+Use the document context and conversation history below to answer the user's recipe query accurately.
 
 Document Context:
 {context}
 
-User Preferences:
+Previous Conversation History:
+{chat_history}
+
+User Current Preferences:
 - Dietary Restrictions: {dietary_restriction}
 - Available Pantry Ingredients: {available_ingredients}
-- Servings: {servings}
+- Target Servings: {servings}
 - Max Cooking Time: {max_time_mins}
 - Cuisine Style: {cuisine_preference}
 
-Query:
+Current User Query:
 {question}
 
 Guidelines:
-1. If the user provided available pantry ingredients ({available_ingredients}), prioritize using them and suggest functional substitutions for missing items.
-2. In the Shopping List, separate items already in the pantry from items needed to buy.
+1. **If this is a follow-up question or clarification on the previously discussed recipe** (e.g. asking for substitutions like replacing tofu/eggs, adapting to an air fryer/microwave, storage/reheating tips, or macro questions):
+   - Answer the question directly and conversationally using context from the previous recipe.
+   - Explain the functional cooking technique, step adjustments, and estimated impact on nutrition/flavor.
+   - Include a practical **💡 Chef Tip**.
+   - Do NOT rigidly force an entire empty template if the user is asking a targeted question.
 
-Format your response in clean Markdown with these sections:
-
-## 🍳 Recipe: [Recipe Name]
-- **Document Source:** [File Name and Page Number]
-- **Prep Time:** [X mins] | **Cook Time:** [Y mins] | **Total Time:** [Z mins]
-- **Portion Size:** Scaled for **{servings} servings**
-
----
-
-### 🥗 Ingredients & Smart Substitutions
-(Scaled for **{servings} servings**)
-- [Ingredients with exact quantities]
-
-**💡 Smart Substitutions & Pantry Adaptation:**
-- **Adaptation:** [Explain dietary or pantry substitutions made]
-- **Why it works:** [Culinary explanation]
-
----
-
-### ⏱️ Step-by-Step Cooking Instructions
-1. **[Step Name]:** [Instructions]
-2. **[Step Name]:** [Instructions]
-3. **[Step Name]:** [Instructions]
-
-> 💡 **Chef Tip:** [Practical tip for texture, flavor, or heat control]
-
----
-
-### 📊 Estimated Nutritional Facts (Per Serving)
-| Nutrient | Amount Per Serving |
-| :--- | :--- |
-| **Calories** | ~[X] kcal |
-| **Protein** | ~[X] g |
-| **Total Carbohydrates** | ~[X] g |
-| **Total Fats** | ~[X] g |
-| **Dietary Fiber** | ~[X] g |
-
-**Dietary Highlights:** [e.g. Sugar-Free, High-Protein, Vegan, Heart-Healthy]
-
----
-
-### 🛒 Smart Shopping List
-**✅ In Your Pantry (Already Have):**
-- [Pantry items used]
-
-**🛒 Need to Buy (Missing Ingredients):**
-- [ ] [Missing items]
+2. **If this is a new recipe generation request or major recipe search**:
+   - Provide the complete, structured 5-part recipe guide formatted in Markdown with:
+     ## 🍳 Recipe: [Recipe Name]
+     - **Document Source:** [File Name and Page Number]
+     - **Prep Time:** [X mins] | **Cook Time:** [Y mins] | **Total Time:** [Z mins]
+     - **Portion Size:** Scaled for **{servings} servings**
+     ---
+     ### 🥗 Ingredients & Smart Substitutions
+     (Scaled for **{servings} servings**)
+     - [Ingredients with exact quantities]
+     **💡 Smart Substitutions & Pantry Adaptation:**
+     - **Adaptation:** [Explain dietary or pantry substitutions made]
+     - **Why it works:** [Culinary explanation]
+     ---
+     ### ⏱️ Step-by-Step Cooking Instructions
+     1. **[Step Name]:** [Instructions]
+     2. **[Step Name]:** [Instructions]
+     3. **[Step Name]:** [Instructions]
+     > 💡 **Chef Tip:** [Practical tip for texture, flavor, or heat control]
+     ---
+     ### 📊 Estimated Nutritional Facts (Per Serving)
+     | Nutrient | Amount Per Serving |
+     | :--- | :--- |
+     | **Calories** | ~[X] kcal |
+     | **Protein** | ~[X] g |
+     | **Total Carbohydrates** | ~[X] g |
+     | **Total Fats** | ~[X] g |
+     | **Dietary Fiber** | ~[X] g |
+     **Dietary Highlights:** [e.g. Sugar-Free, High-Protein, Vegan, Heart-Healthy]
+     ---
+     ### 🛒 Smart Shopping List
+     **✅ In Your Pantry (Already Have):**
+     - [Pantry items used]
+     **🛒 Need to Buy (Missing Ingredients):**
+     - [ ] [Missing items]
 """
 
         prompt = ChatPromptTemplate.from_template(system_prompt)
@@ -212,11 +218,12 @@ Format your response in clean Markdown with these sections:
                 active_llm = ChatGoogleGenerativeAI(
                     model=model_name,
                     google_api_key=self.api_key,
-                    temperature=0.2
+                    temperature=0.3
                 )
                 chain = prompt | active_llm | StrOutputParser()
                 response_text = chain.invoke({
                     "context": context if context else "No document excerpts found.",
+                    "chat_history": history_text,
                     "dietary_restriction": dietary_restriction if dietary_restriction != "None" else "Standard / No restrictions",
                     "available_ingredients": available_ingredients if available_ingredients else "None specified (Standard pantry)",
                     "servings": str(servings),

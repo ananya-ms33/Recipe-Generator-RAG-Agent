@@ -190,13 +190,16 @@ if user_query:
             with st.spinner("Searching document and generating recipe..."):
                 try:
                     time_limit = max_time if max_time > 0 else None
+                    # Get prior conversation history (excluding current user query)
+                    prior_history = [m for m in st.session_state.messages[:-1] if m.get("role") in ["user", "assistant"]]
                     res = rag_agent.query(
                         question=user_query,
                         dietary_restriction=diet,
                         available_ingredients=pantry,
                         servings=servings,
                         max_time_mins=time_limit,
-                        cuisine_preference=cuisine
+                        cuisine_preference=cuisine,
+                        chat_history=prior_history
                     )
                     
                     answer = res["answer"]
