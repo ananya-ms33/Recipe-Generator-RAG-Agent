@@ -1,4 +1,4 @@
-﻿import os
+import os
 import glob
 import streamlit as st
 from dotenv import load_dotenv
@@ -55,7 +55,7 @@ with st.sidebar:
     
     # Locate available documents
     local_pdfs = glob.glob(os.path.join(BASE_DIR, "*.pdf"))
-    local_txts = glob.glob(os.path.join(BASE_DIR, "*.txt"))
+    local_txts = [f for f in glob.glob(os.path.join(BASE_DIR, "*.txt")) if os.path.basename(f).lower() != "requirements.txt"]
     all_files = [os.path.basename(f) for f in (local_pdfs + local_txts)]
     
     default_idx = 0
